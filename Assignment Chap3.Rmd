@@ -1,0 +1,435 @@
+---
+title: "Assignment CH3"
+author: "Abdul-Rashid Zakaria"
+date: "1/26/2022"
+output: 
+  html_document: default
+  word_document: default
+  always_allow_html: FALSE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Setting up working directory
+```{r}
+#setwd('C//homes.mtu.edu/home/Documents/Predictive Modeling')
+```
+
+```{r}
+# Load libraries and data
+library(ggplot2)
+library(dplyr)
+library(moments)
+library(e1071)
+library(caret)
+library(mlbench)
+library(psych)
+library(tidyverse)
+library(kableExtra)
+library(corrplot)
+library(knitr)
+```
+
+#Question 3.1
+
+##a.Using visualizations, explore the predictor variables to understand their distributions as well as the relationships between predictors.
+
+```{r, echo=FALSE}
+#Question 3.1
+
+# a.
+
+# Load the data 
+
+data(Glass)
+
+# Check the structure of the Glass data
+
+str(Glass)
+
+```
+The dataset has 10 variables of which nine are the predictors which are all numeric. The response is stored in the column labeled Type. 
+
+Show summary statistics of the Glass dataset
+
+```{r}
+# Compute and print out the summary statistics for the predictors
+
+data(Glass)
+glass_summary <- Glass %>% discard(is.factor) %>% describe()
+  
+glass_summary %>%  kable(caption="Summary Statistics of Glass dataset",digits = 3) %>%
+  kable_styling(c("hold_position", "striped"))
+
+print(glass_summary)
+```
+### Summary Statistics
+
+From the statistics calculated above, all the predictors are skewed with varying degrees of symmetry. The expected value for perfect symmetry (kurtosis) is 3.  
+
+
+### Distribution
+The distribution is visually shown using histograms of the predictors.
+```{r}
+# Create a histogram plot for all the predictors
+
+Glass %>%
+  discard(is.factor)%>%
+  gather() %>% 
+  ggplot(aes(value)) +
+  geom_histogram(fill="brown", color = "black") +
+  facet_wrap(~ key, scales = "free") +
+  theme_bw()
+
+```
+From the plot above, Na, RI, Si, Al and Ca are relatively symmetric, hence the distribution is close to a normal distribution. Fe and Mg indicate two peaks whilst Ba and K have singular peaks close to low values.
+
+
+### Relationship
+
+We use the correlation plot to visualize the linear relationships between the the predictors. This technique is also known as the Pearson correlation.
+```{r}
+glass_pred_Cor <- cor(Glass[-10])
+corrplot(glass_pred_Cor,method = "number", type = "lower")
+```
+From the plot above, the strongest positive correlation is between Ca and RI;there are weak positive correlations between Al and Ba, Ba and Na, and K and Al. The strongest negative correlation is between Si and RI.
+
+##b. Do there appear to be any outliers in the data? Are any predictors skewed? (Please calculate the skewness values for the predictors, summarize these values using a table with interpretations).
+
+### Outliers
+We can determine the presence of outliers in our data by plotting boxplots of the predictors
+
+```{r}
+Glass %>%
+  discard(is.factor)%>%
+  gather() %>% 
+  ggplot(aes(x ="", y = value))+
+  stat_boxplot(geom ="errorbar") + 
+  geom_boxplot(outlier.colour = "lightblue", fill="green") +
+  facet_wrap(~ key, scales = "free") +
+  labs(x = NULL, y = NULL) +
+  theme_bw() +
+  theme(axis.ticks.y=element_blank())+
+  coord_flip()
+```
+### Skewness 
+The predictors are skewed, as shown in the table below.
+
+
+```{r}
+glass_summary$var <- rownames(glass_summary)
+glass_skew <-glass_summary %>% select(var,skew)  
+glass_skew %>% 
+  arrange(skew) %>% 
+  kable(digits = 3) %>% 
+  kable_styling(c("striped", "hover"), full_width = FALSE)
+
+```
+##c. Are there any relevant transformations of one or more predictors that might improve the classification model? (Please perform at least two transformations based on your observations of the predictors; use visualizations of before and after the transformations; and make comments).
+
+First we could scale and center all our predictors to reduce the effects of the high magnitudes found in some predictors. For example relatively high magnitudes found in K, Si and Na. Also, using BoxCox we can reduce the skewness of our predictors, especially highly skewed predictors. 
+
+### transformation one: center and scale 
+
+```{r}
+#c
+
+#center and scale predictors
+glass2 <- Glass %>%
+  discard(is.factor) 
+glass2 <- as.data.frame(sapply(glass2, scale)) 
+ 
+```
+
+### Visualize transformation
+
+```{r}
+glass2 %>%
+  gather()%>%
+  ggplot(aes(value)) +
+  geom_histogram(fill="brown", color = "black") +
+  facet_wrap(~ key, scales = "free") +
+  theme_bw()
+
+```
+Centering and scaling did not improve some of the predictors espeecially predictors with bimodal peaks.
+
+### BoxCox transformation
+
+We can find the lambda for each predictor using the BoxCox function
+```{r}
+predictors <- as.vector(glass_summary$var)
+
+for (predictor in predictors){
+  print(predictor)
+  print(BoxCoxTrans(Glass[,predictor]))
+}
+
+```
+First six rows of the glass data before transformation
+```{r}
+head(Glass[-10]) %>% kable(caption="Glasswithout transformations", digits = 3) %>%
+  kable_styling(c("hold_position", "striped"))
+```
+First 6 rows after transformations 
+```{r}
+trans <- preProcess(Glass[-10], method = c('center', 'scale', 'BoxCox'))
+trans_glass <- predict(trans, Glass[-10])
+
+head(trans_glass) %>% kable(caption="Glass with transformations", digits = 3) %>% 
+  kable_styling(c("hold_position", "striped"))
+```
+Plotting the tranformed predictors
+
+```{r}
+trans_glass%>%
+  keep(is.numeric) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(fill ='brown', color ='black')+
+    theme_bw()
+```
+There are still some bimodal peaks in our data. The BoxCox transformation did not improve the distribution of the predictors.
+
+Another transformation worth trying will be the principal component analysis for skewness
+
+### Spatial sign transformation
+
+```{r}
+trans <- preProcess(Glass, method = c('center', 'scale', 'spatialSign'))
+trans_glass <- predict(trans, Glass)
+trans_glass%>%
+  keep(is.numeric) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(fill ='brown', color ='black')+
+    theme_bw()
+```
+
+```{r}
+trans <- preProcess(Glass, method = c('center', 'scale', 'spatialSign', 'pca'))
+trans_glass <- predict(trans, Glass)
+trans_glass%>%
+  keep(is.numeric) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(fill ='brown', color ='black')+
+    theme_bw()
+```
+After the spatial sign transformation, generally there is an improvement in the distribution of each predictor. 
+
+
+#Question 3.2
+
+##a. Investigate the frequency distributions for the categorical predictors. Are any of the distributions degenerate in the ways discussed earlier in this chapter? (Please provide figures/tables as necessary to support your conclusions)
+
+```{r}
+#a.
+
+#Load the data
+data(Soybean)
+str(Soybean)
+
+```
+
+```{r}
+
+# Tidy dataset, removing non-numeric variables
+subset(Soybean, select= c(-Class)) %>% 
+  gather() %>% 
+  ggplot(aes(value, fill = value)) +
+  geom_bar() +
+  scale_fill_manual(values = c('blue', rep('grey40', 7))) +
+  facet_wrap(~ key) +
+  theme_minimal()+
+  labs(title = 'Soybean: Distributions by Predictor')
+
+```
+Predictors with a single value for the vast majority of the samples include sclerotia, roots, fruiting.bodies, mycelium and others. Distributions of these predictors are regarded as degenerate since they have unique values that account for most of the frequency of the samples.
+
+
+## b. Roughly 18% of the data are missing. Are there particular predictors that are more likely to be missing? Is the pattern of missing data related to the classes?
+```{r}
+#b.
+
+Soybean %>%
+   select(-Class, -date) %>%
+  summarise_all(funs(perc_missing = sum(is.na((.)) / nrow(Soybean)))) %>% 
+  rename_all(funs(str_replace(., '_perc_missing', ''))) %>%
+  gather() %>% 
+  ggplot(aes(x = reorder(key, value), y = value)) +
+  geom_bar(stat = 'identity', fill = 'brown') +
+  geom_text(aes(label = scales::percent(value), y = -.01), size = 3,position = position_dodge(width = 0.9)) +
+  coord_flip() +
+  labs(title = 'Soybean: Missing Data by Predictor',
+         x = '', 
+         y = '') +
+  theme_bw() +
+  theme(axis.text.x = element_blank())
+
+```
+From the graph, sever, seed.tmt, lodging and hail variables are missing in most of them. leaves is the only other predictor with entries for all cases.
+
+```{r}
+Soybean %>%
+  group_by(Class) %>% 
+  mutate(Count = n(), Proportion=round(Count/nrow(Soybean)*100,3)) %>%
+  ungroup() %>%
+  filter(!complete.cases(.)) %>%
+  select(Class, Count, Proportion) %>% unique() %>%
+  kable(caption="Classes with Missing Data in Proportion to All Classes") %>%
+  kable_styling(full_width = FALSE)
+```
+The proportion of class relative to all the classes is given above.
+
+##c.Develop a strategy for handling missing data, either by eliminating predictors or imputation. (You only need to provide the strategy, do not need to implement the strategy).
+
+Due to the size of our data, elimination of predictors would not be ideal. Each variable has less than 18% of data missing, which could be handled by KNN or mode imputation approach. It may also be useful to reduce the dimensions by extracting the most variance through PCA. However, imputation may have to be done for all the predictors in a few cases. Another strategy will be to eliminate the classes with missing data all together. Models such as naive Bayes and tree-based that are less sensitive to missing data will be suitable. 
+
+
+#Question 3.3
+
+##a. Start R and use these commands to load the data:
+```{r}
+data(BloodBrain)
+str(logBBB)
+str(bbbDescr)
+names(bbbDescr)
+names(logBBB)
+```
+
+##b.Generally speaking, are there strong relationships between the predictor data? If so, how could correlations in the predictor set be reduced? Does this have a dramatic effect on the number of predictors available for modeling?
+
+
+First we can find the correlation of the raw data without any transformations 
+```{r}
+raw_Corr<-cor(bbbDescr)
+corrplot(raw_Corr,method = "square")
+length(bbbDescr)
+```
+There is high correlations between certain predictors. To reduce correlation among the predictors, a stepwise procedure would be to use nearzerovar function to diagnose predictors with near zero variance. 
+```{r}
+#diagnose for near zero variance and store each predictor's results
+predictor_Info <- nearZeroVar(bbbDescr, saveMetrics = TRUE)
+
+#discard predictors with near zero variance metric == True
+predictor_filtered <- bbbDescr[,!predictor_Info$nzv]
+
+length(predictor_filtered)
+```
+
+We can check for skewness for the filtered predictors 
+```{r}
+# Compute and print out the summary statistics for the predictors
+
+filter1_summary <- predictor_filtered %>%  describe()
+  
+filter1_summary %>%  kable(caption="Summary Statistics of Filtered dataset",digits = 3) %>%
+  kable_styling(c("hold_position", "striped"))
+
+print(head(filter1_summary["skew"]))
+```
+
+We can transform our filtered data using spatial sign to make our filtered predictors uncorrelated and center and scale the data to improve the symmetry of each predictor.
+
+```{r}
+trans1 <- preProcess(predictor_filtered, method = c('center', 'scale', 'spatialSign'))
+trans_filter1 <- predict(trans1, predictor_filtered)
+trans_filter1_summary <- trans_filter1 %>%  describe()
+  
+trans_filter1_summary %>%  kable(caption="Summary Statistics of Filtered dataset",digits = 3) %>%
+  kable_styling(c("hold_position", "striped"))
+
+ncol(trans_filter1)
+print(head(trans_filter1_summary["skew"]))
+
+```
+
+Recalculating the correlations between the transformed predictors
+```{r}
+trans_Corr<-cor(trans_filter1)
+corrplot(trans_Corr,method = "square")
+```
+Another method will be to use findCorrelation function on the raw correlated predictors to reduce the number of predictors. Depending on the cutoff, the number of predictors can be dramatically reduced.
+
+
+```{r}
+# Create a graph of missing values 
+image(is.na(Soybean), main = "Missing Values", xlab = "Observation", ylab = "Variable", xaxt = "n", yaxt = "n", bty = "n")
+axis(1, seq(0, 1, length.out = nrow(Soybean)), 1:nrow(Soybean), col = "brown")
+
+```
+
+
+```{r}
+cutoff <- seq(from = 0.2, to = 0.95, by = 0.5)
+
+size <- mean_corr <- rep(NA, length(cutoff))
+
+removals <- vector(mode ="list", length = (length(cutoff)))
+
+for(i in seq_along(cutoff)){
+   removals[[i]] <- findCorrelation(raw_Corr, cutoff[i])
+  subMat <- raw_Corr[-removals[[i]], -removals[[i]]]
+  size[i] <- ncol(raw_Corr) -length(removals[[i]])
+  mean_corr[i] <- mean(abs(subMat[upper.tri(subMat)]))
+}
+
+corrData <- data.frame(value = c(size, mean_corr),
+      threshold = c(cutoff, cutoff),
+       what = rep(c("Predictors",
+       "Average Absolute Correlation"),
+       each = length(cutoff)))
+
+corrData
+
+```
+
+```{r}
+#Reduce the number of predictors with findCorrelation
+
+highCorr <- findCorrelation(raw_Corr, cutoff = .85)
+length(highCorr)
+highCorr
+filteredPredictors <- bbbDescr[, -highCorr]
+length(filteredPredictors)
+
+```
+
+```{r}
+#Reduce the number of predictors with findCorrelation
+
+highCorr <- findCorrelation(raw_Corr, cutoff = .75)
+length(highCorr)
+highCorr
+filteredPredictors <- bbbDescr[, -highCorr]
+length(filteredPredictors)
+
+```
+
+```{r}
+#Reduce the number of predictors with findCorrelation
+
+highCorr <- findCorrelation(raw_Corr, cutoff = .65)
+length(highCorr)
+highCorr
+filteredPredictors <- bbbDescr[, -highCorr]
+length(filteredPredictors)
+
+```
+
+```{r}
+#Reduce the number of predictors with findCorrelation
+
+highCorr <- findCorrelation(raw_Corr, cutoff = .5)
+length(highCorr)
+highCorr
+filteredPredictors <- bbbDescr[, -highCorr]
+length(filteredPredictors)
+
+```
